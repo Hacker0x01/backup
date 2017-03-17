@@ -1,4 +1,5 @@
 require "spec_helper"
+require "aws-sdk"
 
 module Backup
   describe Notifier::Ses do
@@ -56,21 +57,33 @@ module Backup
     end
 
     describe "#notify!" do
-      let(:fake_ses) { Object.new }
+      let(:fake_ses) { Aws::SES::Client.new(stub_responses: true) }
       let(:notifier) do
         f = fake_ses
         Notifier::Ses.new(model) do |ses|
           ses.access_key_id = "my_access_key_id"
           ses.secret_access_key = "my_secret_access_key"
+          ses.to = "my.receiver.email@gmail.com"
+          ses.from = "my.sender.email@gmail.com"
+          ses.cc = "my.cc.email@gmail.com"
+          ses.bcc = "my.bcc.email@gmail.com"
+          ses.reply_to = "my.reply_to.email@gmail.com"
           ses.stubs(:client).returns(f)
         end
       end
 
       context "when status is :success" do
         it "sends a success message" do
-          fake_ses.expects(:send_raw_email).once.with do |mail|
+          fake_ses.expects(:send_raw_email).once.with do |send_opts|
+            mail = ::Mail.new(send_opts[:raw_message][:data])
             expect(mail.subject).to eq("[Backup::Success] test label (test_trigger)")
             expect(mail.body.raw_source).to match_regex("Backup Completed Successfully!")
+            expect(mail.to).to eq ["my.receiver.email@gmail.com"]
+            expect(mail.from).to eq ["my.sender.email@gmail.com"]
+            expect(mail.cc).to eq ["my.cc.email@gmail.com"]
+            expect(mail.bcc).to eq ["my.bcc.email@gmail.com"]
+            expect(mail.reply_to).to eq ["my.reply_to.email@gmail.com"]
+            expect(mail.destinations).to eq send_opts[:destinations]
           end
 
           notifier.send(:notify!, :success)
@@ -79,10 +92,12 @@ module Backup
 
       context "when status is :warning" do
         it "sends a warning message" do
-          fake_ses.expects(:send_raw_email).once.with do |mail|
+          fake_ses.expects(:send_raw_email).once.with do |send_opts|
+            mail = ::Mail.new(send_opts[:raw_message][:data])
             expect(mail.subject).to eq("[Backup::Warning] test label (test_trigger)")
             expect(mail.parts[0].body.raw_source).to match_regex("with Warnings")
             expect(mail.attachments[0].filename).to match_regex("log")
+            expect(mail.destinations).to eq send_opts[:destinations]
           end
 
           notifier.send(:notify!, :warning)
@@ -91,10 +106,12 @@ module Backup
 
       context "when status is :failure" do
         it "sends a failure message" do
-          fake_ses.expects(:send_raw_email).once.with do |mail|
+          fake_ses.expects(:send_raw_email).once.with do |send_opts|
+            mail = ::Mail.new(send_opts[:raw_message][:data])
             expect(mail.subject).to eq("[Backup::Failure] test label (test_trigger)")
             expect(mail.parts[0].body.raw_source).to match_regex("Backup Failed!")
             expect(mail.attachments[0].filename).to match_regex("log")
+            expect(mail.destinations).to eq send_opts[:destinations]
           end
 
           notifier.send(:notify!, :failure)
